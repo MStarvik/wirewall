@@ -1,0 +1,11 @@
+[Unit]
+Description=WireGuard configuration daemon
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/wirewalld
+
+[Install]
+WantedBy=multi-user.target
