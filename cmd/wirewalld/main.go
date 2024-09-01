@@ -135,6 +135,25 @@ func readClients(dir string) ([]*Client, error) {
 	return clients, nil
 }
 
+func configureWG(iface string, clients []*Client) error {
+	wg, err := wgctrl.New()
+	if err != nil {
+		return err
+	}
+	defer wg.Close()
+
+	config := wgtypes.Config{}
+	for _, client := range clients {
+		config.Peers = append(config.Peers, client.PeerConfig())
+	}
+
+	if err := wg.ConfigureDevice(iface, config); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func updateDNS(zone string, clients []*Client) error {
 	cmd := exec.Command("nsupdate", "-l")
 
@@ -174,18 +193,11 @@ func main() {
 		panic(err)
 	}
 
-	wg, err := wgctrl.New()
-	if err != nil {
+	if err := configureWG(config.Interface, clients); err != nil {
 		panic(err)
 	}
-	defer wg.Close()
 
-	wgConfig := wgtypes.Config{}
-	for _, client := range clients {
-		wgConfig.Peers = append(wgConfig.Peers, client.PeerConfig())
-	}
-
-	if err := wg.ConfigureDevice(config.Interface, wgConfig); err != nil {
+	if err := updateDNS(config.Zone, clients); err != nil {
 		panic(err)
 	}
 
@@ -202,8 +214,4 @@ func main() {
 	// for _, chain := range chains {
 	// 	println(chain.Name)
 	// }
-
-	if err := updateDNS(config.Zone, clients); err != nil {
-		panic(err)
-	}
 }
