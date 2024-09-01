@@ -3,6 +3,7 @@ module github.com/MStarvik/wirewall
 go 1.23.0
 
 require (
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/google/nftables v0.2.0
 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20230429144221-925a1e7659e6
 	gopkg.in/ini.v1 v1.67.0

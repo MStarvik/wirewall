@@ -9,14 +9,34 @@ import (
 	"path"
 	"strings"
 
+	"github.com/godbus/dbus/v5"
+	"github.com/godbus/dbus/v5/introspect"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gopkg.in/ini.v1"
 )
 
+const configFile = "/etc/wirewall/wirewall.conf"
+const clientsDir = "/etc/wirewall/clients"
+
+const dbusName = "no.mstarvik.wirewall"
+const dbusPath = "/no/mstarvik/wirewall"
+const dbusIntro = `
+<node>
+	<interface name="no.mstarvik.wirewall">
+		<method name="Configure">
+			<arg type="s" name="error" direction="out"/>
+		</method>
+		<method name="Reload">
+			<arg type="s" name="error" direction="out"/>
+		</method>
+	</interface>
+</node>
+`
+
 type Config struct {
 	Interface string
-	Zone      string
+	Zone      *string
 }
 
 type Client struct {
@@ -43,32 +63,35 @@ func (c Client) PeerConfig() wgtypes.PeerConfig {
 	}
 }
 
-func ReadConfig(file string) (Config, error) {
+func ReadConfig(file string) (*Config, error) {
+	config := new(Config)
+
 	cfg, err := ini.Load(file)
 	if err != nil {
-		return Config{}, err
+		return nil, err
 	}
 
 	section := cfg.Section("")
 
 	if !section.HasKey("interface") {
-		return Config{}, errors.New("read " + file + ": missing interface")
+		return nil, errors.New("read " + file + ": missing interface")
+	}
+	config.Interface = section.Key("interface").String()
+
+	if section.HasKey("zone") {
+		zone := section.Key("zone").String()
+		config.Zone = &zone
 	}
 
-	if !section.HasKey("zone") {
-		return Config{}, errors.New("read " + file + ": missing zone")
-	}
-
-	return Config{
-		Interface: section.Key("interface").String(),
-		Zone:      section.Key("zone").String(),
-	}, nil
+	return config, nil
 
 }
 
 func readClient(file string) (*Client, error) {
+	client := new(Client)
+
 	_, name := path.Split(file)
-	name = strings.TrimSuffix(name, ".conf")
+	client.Name = strings.TrimSuffix(name, ".conf")
 
 	cfg, err := ini.Load(file)
 	if err != nil {
@@ -85,6 +108,7 @@ func readClient(file string) (*Client, error) {
 	if ip == nil {
 		return nil, errors.New("read " + file + ": invalid ip")
 	}
+	client.IP = ip
 
 	if !section.HasKey("public_key") {
 		return nil, errors.New("read " + file + ": missing public_key")
@@ -94,21 +118,21 @@ func readClient(file string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	client.PublicKey = publicKey
 
-	var presharedKey *wgtypes.Key
 	if section.HasKey("preshared_key") {
 		key, err := wgtypes.ParseKey(section.Key("preshared_key").String())
 		if err != nil {
 			return nil, err
 		}
-		presharedKey = &key
+		client.PresharedKey = &key
 	}
 
-	return &Client{name, ip, publicKey, presharedKey}, nil
+	return client, nil
 }
 
-func readClients(dir string) ([]*Client, error) {
-	clients := []*Client{}
+func readClients(dir string) ([]Client, error) {
+	clients := []Client{}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -129,13 +153,13 @@ func readClients(dir string) ([]*Client, error) {
 			return nil, err
 		}
 
-		clients = append(clients, client)
+		clients = append(clients, *client)
 	}
 
 	return clients, nil
 }
 
-func configureWG(iface string, clients []*Client) error {
+func configureWG(iface string, clients []Client) error {
 	wg, err := wgctrl.New()
 	if err != nil {
 		return err
@@ -154,7 +178,7 @@ func configureWG(iface string, clients []*Client) error {
 	return nil
 }
 
-func updateDNS(zone string, clients []*Client) error {
+func updateDNS(zone string, clients []Client) error {
 	cmd := exec.Command("nsupdate", "-l")
 
 	stdin, err := cmd.StdinPipe()
@@ -182,23 +206,89 @@ func updateDNS(zone string, clients []*Client) error {
 	return nil
 }
 
+type WireWall struct {
+	Config  Config
+	Clients []Client
+}
+
+func (state *WireWall) Configure() *dbus.Error {
+	clients, err := readClients(clientsDir)
+	if err != nil {
+		return dbus.NewError(dbusName+".Error", []interface{}{err.Error()})
+	}
+	state.Clients = clients
+
+	if err := configureWG(state.Config.Interface, clients); err != nil {
+		return dbus.NewError(dbusName+".Error", []interface{}{err.Error()})
+	}
+
+	if state.Config.Zone != nil {
+		if err := updateDNS(*state.Config.Zone, clients); err != nil {
+			return dbus.NewError(dbusName+".Error", []interface{}{err.Error()})
+		}
+	}
+
+	return nil
+}
+
+func (state *WireWall) Reload() *dbus.Error {
+	config, err := ReadConfig(configFile)
+	if err != nil {
+		return dbus.NewError(dbusName+".Error", []interface{}{err.Error()})
+	}
+	state.Config = *config
+
+	clients, err := readClients(clientsDir)
+	if err != nil {
+		return dbus.NewError(dbusName+".Error", []interface{}{err.Error()})
+	}
+	state.Clients = clients
+
+	if err := configureWG(state.Config.Interface, clients); err != nil {
+		return dbus.NewError(dbusName+".Error", []interface{}{err.Error()})
+	}
+
+	if state.Config.Zone != nil {
+		if err := updateDNS(*state.Config.Zone, clients); err != nil {
+			return dbus.NewError(dbusName+".Error", []interface{}{err.Error()})
+		}
+	}
+
+	return nil
+}
+
+func loadState() (*WireWall, error) {
+	state := new(WireWall)
+
+	config, err := ReadConfig(configFile)
+	if err != nil {
+		return nil, err
+	}
+	state.Config = *config
+
+	clients, err := readClients(clientsDir)
+	if err != nil {
+		return nil, err
+	}
+	state.Clients = clients
+
+	return state, nil
+}
+
 func main() {
-	config, err := ReadConfig("/etc/wirewall/wirewall.conf")
+	state, err := loadState()
 	if err != nil {
 		panic(err)
 	}
 
-	clients, err := readClients("/etc/wirewall/clients")
-	if err != nil {
+	if err := configureWG(state.Config.Interface, state.Clients); err != nil {
 		panic(err)
 	}
 
-	if err := configureWG(config.Interface, clients); err != nil {
-		panic(err)
-	}
-
-	if err := updateDNS(config.Zone, clients); err != nil {
-		panic(err)
+	if state.Config.Zone != nil {
+		if err := updateDNS(*state.Config.Zone, state.Clients); err != nil {
+			panic(err)
+		}
 	}
 
 	// conn, err := nftables.New()
@@ -214,4 +304,23 @@ func main() {
 	// for _, chain := range chains {
 	// 	println(chain.Name)
 	// }
+
+	conn, err := dbus.ConnectSystemBus()
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+
+	conn.Export(state, dbusPath, dbusName)
+	conn.Export(introspect.Introspectable(dbusIntro), dbusPath, "org.freedesktop.DBus.Introspectable")
+
+	reply, err := conn.RequestName(dbusName, dbus.NameFlagDoNotQueue)
+	if err != nil {
+		panic(err)
+	}
+	if reply != dbus.RequestNameReplyPrimaryOwner {
+		panic("an instance of wirewalld is already running")
+	}
+
+	select {}
 }

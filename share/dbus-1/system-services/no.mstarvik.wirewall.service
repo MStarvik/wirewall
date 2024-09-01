@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=no.mstarvik.wirewall
+Exec=/bin/false
+User=root
+SystemdService=dbus-no.mstarvik.wirewall.service

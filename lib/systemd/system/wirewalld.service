@@ -1,0 +1,12 @@
+[Unit]
+Description=WireGuard configuration daemon
+After=network-online.target
+
+[Service]
+BusName=no.mstarvik.wirewall
+ExecStart=/usr/local/bin/wirewalld
+ExecReload=busctl call no.mstarvik.wirewall /no/mstarvik/wirewall no.mstarvik.wirewall Reload
+
+[Install]
+Alias=dbus-no.mstarvik.wirewall.service
+WantedBy=multi-user.target
