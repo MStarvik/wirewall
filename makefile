@@ -18,19 +18,19 @@ $(INSTALL_PREFIX)/bin/wirewallctl: bin/wirewallctl | $(INSTALL_PREFIX)/bin
 $(INSTALL_PREFIX)/lib/systemd/system:
 	mkdir -p $@
 
-$(INSTALL_PREFIX)/lib/systemd/system/wirewalld.service: lib/systemd/system/wirewalld.service | $(INSTALL_PREFIX)/lib/systemd/system
+$(INSTALL_PREFIX)/lib/systemd/system/wirewalld.service: data/systemd/wirewalld.service | $(INSTALL_PREFIX)/lib/systemd/system
 	cp $< $@
 
 $(INSTALL_PREFIX)/share/dbus-1/system-services:
 	mkdir -p $@
 
-$(INSTALL_PREFIX)/share/dbus-1/system-services/no.mstarvik.wirewall.service: share/dbus-1/system-services/no.mstarvik.wirewall.service | $(INSTALL_PREFIX)/share/dbus-1/system-services
+$(INSTALL_PREFIX)/share/dbus-1/system-services/no.mstarvik.wirewall.service: data/dbus/no.mstarvik.wirewall.service | $(INSTALL_PREFIX)/share/dbus-1/system-services
 	cp $< $@
 
 /etc/dbus-1/system.d:
 	mkdir -p $@
 
-/etc/dbus-1/system.d/no.mstarvik.wirewall.conf: etc/dbus-1/system.d/no.mstarvik.wirewall.conf | /etc/dbus-1/system.d
+/etc/dbus-1/system.d/no.mstarvik.wirewall.conf: data/dbus/no.mstarvik.wirewall.conf | /etc/dbus-1/system.d
 	cp $< $@
 
 .PHONY: install-bin
